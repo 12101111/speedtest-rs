@@ -1,208 +1,127 @@
-extern crate reqwest;
-#[macro_use]
-extern crate serde_derive;
-extern crate rand;
-extern crate serde_json;
+use log::info;
+use rand::Rng;
+use serde::Deserialize;
+use std::error::Error;
+use std::fmt;
+use std::io::{BufRead, BufReader, Write};
+use std::net::TcpStream;
+use std::time::Instant;
 
-pub mod server {
+#[derive(Clone, Deserialize)]
+pub struct Server {
+    pub lat: String,
+    pub lon: String,
+    pub distance: i32,
+    pub name: String,
+    pub country: String,
+    pub cc: String,
+    pub sponsor: String,
+    pub id: String,
+    pub host: String,
+    #[serde(skip)]
+    pub latency: f64,
+}
 
-    use std::error;
-
-    use failure::{err_msg, Error, Fail};
-    #[derive(Debug, Fail)]
-    #[fail(display = "list error")]
-    pub struct ListServersError(#[fail(cause)] Error);
-
-    #[derive(Clone, Debug, Deserialize)]
-    pub struct Server {
-        pub distance: i32,
-        pub name: String,
-        pub cc: String,
-        pub sponsor: String,
-        pub id: String,
-        pub host: String,
-        #[serde(skip)]
-        pub latency: u128,
-    }
-
-    pub fn upload(server: &str, bytes: &str) -> Result<f64, Box<error::Error>> {
-        use rand::distributions::Alphanumeric;
-        use rand::{thread_rng, Rng};
-        use std::io::{BufRead, BufReader, Write};
-        use std::net::TcpStream;
-        use std::time::Instant;
-
-        println!("Writing {} bytes", bytes);
-
-        let serv = find_server(server);
-
-        let conn = TcpStream::connect(&serv.host);
-        match conn {
-            Ok(mut stream) => {
-                // tell the server how much we are sending
-                let ulstring = format!("UPLOAD {} 0\r\n", bytes);
-                stream.write_all(ulstring.as_bytes()).unwrap();
-
-                // send the bytes
-                println!("generating random bytes");
-                let randnow = Instant::now();
-                let randstring: String = thread_rng()
-                    .sample_iter(&Alphanumeric)
-                    .take(bytes.parse::<usize>().unwrap())
-                    .collect();
-                let randelapsed = randnow.elapsed().as_millis();
-                println!("Random bytes took {} ms", randelapsed);
-
-                println!("uploading...");
-                let now = Instant::now();
-                stream.write_all(randstring.as_bytes()).unwrap();
-
-                let mut line = String::new();
-                let mut reader = BufReader::new(stream);
-                let _resp = reader.read_line(&mut line);
-                let elapsed = now.elapsed().as_millis();
-                println!("Upload took {} ms", elapsed);
-                let bms = bytes.parse::<u128>().unwrap() / elapsed;
-                let mbps = bms as f64 * 0.008;
-                Ok(mbps)
-            }
-            Err(e) => {
-                println!("Failed to connect to server: Error: '{}'", e);
-                panic!();
-            }
-        }
-    }
-
-    pub fn download(server: &str, bytes: &str) -> Result<f64, Box<error::Error>> {
-        use std::io::{BufRead, BufReader, Write};
-        use std::net::TcpStream;
-        use std::time::Instant;
-
-        println!("Reading {} bytes", bytes);
-
-        let serv = find_server(server);
-
-        let conn = TcpStream::connect(&serv.host);
-        match conn {
-            Ok(mut stream) => {
-                let dlstring = format!("DOWNLOAD {}\r\n", bytes);
-                stream.write_all(dlstring.as_bytes()).unwrap();
-                let mut line = String::new();
-                let mut reader = BufReader::new(stream);
-                let now = Instant::now();
-                let _resp = reader.read_line(&mut line);
-                let elapsed = now.elapsed().as_millis();
-                println!("Download took {} ms", elapsed);
-                let bms = bytes.parse::<u128>().unwrap() / elapsed;
-                let mbps = bms as f64 * 0.008;
-                Ok(mbps)
-            }
-            Err(e) => {
-                println!("Failed to connect to server: Error: '{}'", e);
-                panic!();
-            }
-        }
-    }
-
-    pub fn ping_server(server: &str, num_pings: u128) -> Result<u128, Box<error::Error>> {
-        use std::io::{BufRead, BufReader, Write};
-        use std::net::TcpStream;
-        use std::time::Instant;
-
-        let serv = find_server(server);
-
-        let mut acc: u128 = 0;
-        for _x in 0..num_pings {
-            let conn = TcpStream::connect(&serv.host);
-            match conn {
-                Ok(mut stream) => {
-                    let now = Instant::now();
-                    stream.write_all(b"HI\r\n").unwrap();
-                    let mut line = String::new();
-                    let mut reader = BufReader::new(stream);
-                    let resp = reader.read_line(&mut line);
-                    match resp {
-                        Ok(_n) => {
-                            let elapsed = now.elapsed().as_millis();
-                            acc += elapsed;
-                        }
-                        Err(e) => {
-                            println!("Failed to ping server: Error: '{}'", e);
-                            panic!();
-                        }
-                    }
-                }
-                Err(e) => {
-                    println!("Failed to connect to server: Error: '{}'", e);
-                    panic!();
-                }
-            }
-        }
-        Ok(acc / num_pings)
-    }
-
-    pub fn list_servers() -> Result<Vec<Server>, ListServersError> {
-        let resp = reqwest::get("https://speedtest.net/api/js/servers?engine=js");
-        match resp {
-            Ok(mut r) => {
-                let body = r.json();
-                match body {
-                    Ok(b) => {
-                        let newb: Vec<Server> = b;
-                        Ok(newb)
-                    }
-                    Err(e) => Err(ListServersError(err_msg(format!(
-                        "Error parsing list {}",
-                        e
-                    )))),
-                }
-            }
-            Err(e) => Err(ListServersError(err_msg(format!(
-                "Error retrieving list {}",
-                e
-            )))),
-        }
-    }
-
-    pub fn best_server(num_test: &str) -> Result<Server, Box<error::Error>> {
-        println!("Finding best server...");
-        let mut servers = match list_servers() {
-            Ok(s) => s,
-            Err(e) => {
-                println!("List servers failed: Error: '{}'", e);
-                panic!();
-            }
-        };
-        servers.sort_by_key(|s| s.distance);
-        servers.truncate(num_test.parse::<usize>().unwrap());
-        servers.iter_mut().for_each(|s| {
-            s.latency = ping_server(&s.id, 1).unwrap();
-        });
-        servers.sort_by_key(|s| s.latency);
-        let best = servers[0].clone();
-        Ok(best)
-    }
-
-    fn find_server(server: &str) -> Server {
-        let all_servers = match list_servers() {
-            Ok(n) => n,
-            Err(_e) => Vec::<Server>::new(),
-        };
-
-        all_servers
-            .into_iter()
-            .find(|s| s.id == server)
-            .ok_or_else(|| format!("Can't find server '{}'", server))
-            .unwrap()
+impl fmt::Display for Server {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "[id: {:5}] {:4}Km [{}, {}]\t{}",
+            self.id, self.distance, self.name, self.cc, self.sponsor
+        )
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
+impl fmt::Debug for Server {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "[id: {:5}] {:4}Km(lat: {}°, lon: {}°) {}, {}\n{}: {}\n",
+            self.id,
+            self.distance,
+            self.lat,
+            self.lon,
+            self.name,
+            self.country,
+            self.sponsor,
+            self.host
+        )
     }
+}
+
+pub fn upload(host: &str, bytes: usize) -> Result<f64, Box<dyn Error>> {
+    info!("Upload {} MB", bytes as f64 / (1024.0 * 1024.0));
+    info!("connect to server: {}", host);
+    let mut stream = TcpStream::connect(host)?;
+    let ulstring = format!("UPLOAD {} 0\r\n", bytes);
+    info!("send upload message: {:?}", ulstring);
+    stream.write_all(ulstring.as_bytes())?;
+    info!("generating random bytes");
+    let randnow = Instant::now();
+    let randstring: String = rand::thread_rng()
+        .sample_iter(&rand::distributions::Alphanumeric)
+        .take(bytes)
+        .collect();
+    let randelapsed = randnow.elapsed().as_millis();
+    info!("Random bytes took {} ms", randelapsed);
+    info!("uploading...");
+    let now = Instant::now();
+    stream.write_all(randstring.as_bytes())?;
+    let mut line = String::new();
+    let mut reader = BufReader::new(stream);
+    let _resp = reader.read_line(&mut line);
+    let elapsed = now.elapsed().as_millis();
+    info!("Upload took {} ms", elapsed);
+    Ok(bytes as f64 / elapsed as f64 * 0.008)
+}
+
+pub fn download(host: &str, bytes: usize) -> Result<f64, Box<dyn Error>> {
+    info!("Download {} MB", bytes as f64 / (1024.0 * 1024.0));
+    info!("connect to server: {}", host);
+    let mut stream = TcpStream::connect(host)?;
+    let dlstring = format!("DOWNLOAD {}\r\n", bytes);
+    info!("send download message: {:?}", dlstring);
+    stream.write_all(dlstring.as_bytes())?;
+    let mut line = String::new();
+    let mut reader = BufReader::new(stream);
+    info!("downloading...");
+    let now = Instant::now();
+    let _resp = reader.read_line(&mut line);
+    let elapsed = now.elapsed().as_millis();
+    info!("Download took {} ms", elapsed);
+    Ok(bytes as f64 / elapsed as f64 * 0.008)
+}
+
+pub fn ping_server(host: &str) -> Result<f64, Box<dyn Error>> {
+    info!("Ping Test");
+    info!("connect to server: {}", host);
+    let mut line = String::new();
+    let mut stream = TcpStream::connect(host)?;
+    info!("Send \"HI\" to server");
+    let now = Instant::now();
+    stream.write_all(b"HI\r\n")?;
+    let mut reader = BufReader::new(stream);
+    reader.read_line(&mut line)?;
+    let elapsed = now.elapsed().as_millis();
+    Ok(elapsed as f64)
+}
+
+pub fn list_servers() -> Result<Vec<Server>, Box<dyn Error>> {
+    Ok(reqwest::get("https://speedtest.net/api/js/servers?engine=js")?.json()?)
+}
+
+pub fn best_server() -> Result<Server, Box<dyn Error>> {
+    info!("Finding best server...");
+    let mut servers = list_servers()?;
+    servers.sort_by_key(|s| s.distance);
+    servers.truncate(3);
+    servers.iter_mut().for_each(|s| {
+        info!("ping {}", s.sponsor);
+        s.latency = ping_server(&s.host).unwrap();
+        info!("{} ping result: {}ms", s.sponsor, s.latency);
+    });
+    servers.sort_by(|a, b| a.latency.partial_cmp(&b.latency).unwrap());
+    let best = servers[0].clone();
+    info!("Select server {}", best.sponsor);
+    Ok(best)
 }

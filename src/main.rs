@@ -1,102 +1,110 @@
-extern crate clap;
-extern crate speedtestr;
-use clap::{App, AppSettings, Arg, SubCommand};
-use speedtestr::{server, server::Server};
+use log::{error, info, LevelFilter};
+use speedtest::*;
+use std::error::Error;
+use structopt::StructOpt;
+
+#[derive(Debug, StructOpt)]
+struct Opt {
+    #[structopt(subcommand)]
+    cmd: Command,
+    /// Show verbose output
+    #[structopt(short, long)]
+    verbose: bool,
+    /// Number of bytes to test (only used in upload or download test)
+    #[structopt(short, long)]
+    bytes: Option<usize>,
+    /// Specify id of server to test, id can get from `list` command
+    #[structopt(short, long)]
+    id: Option<String>,
+    /// Specify hostname of server to test
+    #[structopt(short = "n", long)]
+    host: Option<String>,
+    /// Count of times to test
+    #[structopt(short, long)]
+    count: Option<usize>,
+}
+
+#[derive(Debug, StructOpt)]
+enum Command {
+    /// Lists available servers
+    List,
+    /// Upload test
+    Upload,
+    /// Download test
+    Download,
+    /// Ping test
+    Ping,
+}
+
+impl Command {
+    fn unit(&self) -> &str {
+        match self {
+            Command::Upload | Command::Download => "MB/s",
+            _ => "ms",
+        }
+    }
+}
 
 fn main() {
-    let app = App::new("speedtestr")
-        .version("0.0.1")
-        .about("Unofficial speedtest cli")
-        .author("Zach Peters")
-        .setting(AppSettings::ArgRequiredElseHelp)
-        .setting(AppSettings::ColoredHelp)
-        .subcommand(SubCommand::with_name("list").about("Lists available servers"))
-        .subcommand(
-            SubCommand::with_name("upload")
-                .arg(
-                    Arg::with_name("bytes")
-                        .short("b")
-                        .takes_value(true)
-                        .help("Number of bytes to upload"),
-                )
-                .about("Upload test"),
-        )
-        .subcommand(
-            SubCommand::with_name("download")
-                .arg(
-                    Arg::with_name("bytes")
-                        .short("b")
-                        .takes_value(true)
-                        .help("Number of bytes to download"),
-                )
-                .about("Download test"),
-        )
-        .subcommand(
-            SubCommand::with_name("ping")
-                .about("Pings the best server")
-                .arg(
-                    Arg::with_name("numpings")
-                        .short("p")
-                        .takes_value(true)
-                        .help("Number of pings to test with"),
-                )
-                .arg(
-                    Arg::with_name("server")
-                        .short("s")
-                        .takes_value(true)
-                        .help("specify a server number to ping"),
-                ),
-        )
-        .get_matches();
+    let opt = Opt::from_args();
+    let mut log_builder = env_logger::Builder::new();
+    if opt.verbose {
+        log_builder.filter_level(LevelFilter::Info);
+    } else {
+        log_builder.filter_level(LevelFilter::Warn);
+    }
+    log_builder.init();
+    if let Err(e) = run(opt) {
+        error!("{}", e);
+        std::process::exit(1);
+    }
+}
 
-    if app.is_present("list") {
-        let resp = server::list_servers();
-        match resp {
-            Ok(n) => print_servers(n),
-            Err(e) => println!("Err: {:?}", e),
+fn run(opt: Opt) -> Result<(), Box<dyn Error>> {
+    match opt.cmd {
+        Command::List => {
+            for s in list_servers()? {
+                if opt.verbose {
+                    println!("{:?}", s);
+                } else {
+                    println!("{}", s);
+                }
+            }
+        }
+        _ => {
+            // Get hostname to test. not used in `list` command.
+            let host = if opt.id.is_some() {
+                let id = opt.id.as_ref().unwrap();
+                match list_servers()?.into_iter().find(|s| &s.id == id) {
+                    Some(s) => {
+                        info!("Select server: {} based on id: {}", s.sponsor, id);
+                        Ok(s.host)
+                    }
+                    None => Err(format!("Can't find server with id {}", id)),
+                }?
+            } else {
+                opt.host
+                    .as_ref()
+                    .map(String::from)
+                    .unwrap_or(best_server()?.host)
+            };
+            // Get running count
+            let count = opt
+                .count
+                .unwrap_or(if let Command::Ping = opt.cmd { 3 } else { 1 });
+            let mut result = 0.0;
+            for _ in 0..count {
+                let res = match opt.cmd {
+                    Command::Download => download(&host, opt.bytes.unwrap_or(100 * 1024 * 1024))?,
+                    Command::Upload => upload(&host, opt.bytes.unwrap_or(50 * 1024 * 1024))?,
+                    Command::Ping => ping_server(&host)?,
+                    _ => unreachable!(),
+                };
+                result += res;
+                info!("seq={:?} result={} {}", count, res, opt.cmd.unit());
+            }
+            println!("{:?} result={} {}", opt.cmd, result, opt.cmd.unit());
         }
     }
-
-    if let Some(app) = app.subcommand_matches("download") {
-        let bytes = app.value_of("bytes").unwrap_or("100000024");
-        let best = server::best_server("3").unwrap().to_owned();
-        let dl = server::download(best.id.as_str(), bytes).unwrap();
-        println!("Download Results {:#?} mbps", dl);
-    }
-
-    if let Some(app) = app.subcommand_matches("upload") {
-        let bytes = app.value_of("bytes").unwrap_or("50000024");
-        let best = server::best_server("3").unwrap().to_owned();
-        let dl = server::upload(best.id.as_str(), bytes).unwrap();
-        println!("Upload Results {:#?} mbps", dl);
-    }
-
-    if let Some(app) = app.subcommand_matches("ping") {
-        let best = server::best_server("3").unwrap().to_owned();
-        let num_pings = app
-            .value_of("numpings")
-            .unwrap_or("3")
-            .parse::<u128>()
-            .unwrap();
-        ;
-
-        println!("[ping test]");
-        let svr = if app.is_present("server") {
-            app.value_of("server").unwrap()
-        } else {
-            best.id.as_str()
-        };
-
-        let resp = server::ping_server(svr, num_pings);
-        println!("Avg ms: {}", resp.unwrap());
-    }
-
-    fn print_servers(servers: Vec<Server>) {
-        for s in servers {
-            println!(
-                "{} - [distance {}] - ({}) {} {}",
-                s.id, s.distance, s.sponsor, s.name, s.cc
-            );
-        }
-    }
+    Ok(())
 }
