@@ -94,7 +94,7 @@ fn run(opt: Opt) -> Result<(), Box<dyn Error>> {
                 .count
                 .unwrap_or(if let Command::Ping = opt.cmd { 3 } else { 1 });
             let mut result = 0.0;
-            for _ in 0..count {
+            for i in 0..count {
                 let res = match opt.cmd {
                     Command::Download => download(&host, opt.bytes.unwrap_or(100 * 1024 * 1024))?,
                     Command::Upload => upload(&host, opt.bytes.unwrap_or(50 * 1024 * 1024))?,
@@ -102,7 +102,7 @@ fn run(opt: Opt) -> Result<(), Box<dyn Error>> {
                     _ => unreachable!(),
                 };
                 result += res;
-                info!("seq={:?} result={}", count, opt.cmd.display(res));
+                info!("seq={:?} result={}", i, opt.cmd.display(res));
             }
             println!(
                 "{:?} result={}",
