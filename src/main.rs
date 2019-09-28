@@ -82,11 +82,12 @@ fn run(opt: Opt) -> Result<(), Box<dyn Error>> {
                     }
                     None => Err(format!("Can't find server with id {}", id)),
                 }?
-            } else {
-                opt.host
-                    .as_ref()
-                    .map(String::from)
-                    .unwrap_or(best_server()?.host)
+            } else if opt.host.is_some() {
+                let host = opt.host.as_ref().unwrap().clone();
+                info!("Select server: {} based on host settings", host);
+                host
+            }else{
+                best_server()?.host
             };
             // Get running count
             let count = opt
@@ -103,7 +104,12 @@ fn run(opt: Opt) -> Result<(), Box<dyn Error>> {
                 result += res;
                 info!("seq={:?} result={} {}", count, res, opt.cmd.unit());
             }
-            println!("{:?} result={} {}", opt.cmd, result, opt.cmd.unit());
+            println!(
+                "{:?} result={} {}",
+                opt.cmd,
+                result / count as f64,
+                opt.cmd.unit()
+            );
         }
     }
     Ok(())

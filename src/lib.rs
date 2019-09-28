@@ -57,20 +57,19 @@ pub fn upload(host: &str, bytes: usize) -> Result<f64, Box<dyn Error>> {
     info!("send upload message: {:?}", ulstring);
     stream.write_all(ulstring.as_bytes())?;
     info!("generating random bytes");
-    let randnow = Instant::now();
-    let randstring: String = rand::thread_rng()
+    let mut randstring: String = rand::thread_rng()
         .sample_iter(&rand::distributions::Alphanumeric)
-        .take(bytes)
+        .take(bytes - ulstring.len())
         .collect();
-    let randelapsed = randnow.elapsed().as_millis();
-    info!("Random bytes took {} ms", randelapsed);
+    randstring.push('\n');
     info!("uploading...");
+    let mut line = String::new();
     let now = Instant::now();
     stream.write_all(randstring.as_bytes())?;
-    let mut line = String::new();
     let mut reader = BufReader::new(stream);
-    let _resp = reader.read_line(&mut line);
+    reader.read_line(&mut line)?;
     let elapsed = now.elapsed().as_millis();
+    info!("Server response: {:?}", line);
     info!("Upload took {} ms", elapsed);
     Ok(bytes as f64 / elapsed as f64 * 0.008)
 }
@@ -86,8 +85,9 @@ pub fn download(host: &str, bytes: usize) -> Result<f64, Box<dyn Error>> {
     let mut reader = BufReader::new(stream);
     info!("downloading...");
     let now = Instant::now();
-    let _resp = reader.read_line(&mut line);
+    reader.read_line(&mut line)?;
     let elapsed = now.elapsed().as_millis();
+    info!("Server response: {:?}", line);
     info!("Download took {} ms", elapsed);
     Ok(bytes as f64 / elapsed as f64 * 0.008)
 }

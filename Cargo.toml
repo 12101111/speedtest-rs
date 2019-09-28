@@ -1,6 +1,6 @@
 [package]
 name = "speedtest"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["韩朴宇 <w12101111@gmail.com>","Zach Peters <zpeters@gmail.com>"]
 edition = "2018"
 
