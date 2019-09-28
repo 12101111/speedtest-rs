@@ -70,10 +70,10 @@ pub fn upload(host: &str, bytes: usize) -> Result<f64, Box<dyn Error>> {
     stream.write_all(randstring.as_bytes())?;
     let mut reader = BufReader::new(stream);
     reader.read_line(&mut line)?;
-    let elapsed = now.elapsed().as_millis();
+    let elapsed = now.elapsed().as_micros();
     info!("Server response: {:?}", line);
-    info!("Upload took {} ms", elapsed);
-    Ok(bytes as f64 / elapsed as f64 * 0.008)
+    info!("Upload took {} ms", elapsed as f64 / 1000.0);
+    Ok(bytes as f64 / elapsed as f64 * 8.0)
 }
 
 pub fn download(host: &str, bytes: usize) -> Result<f64, Box<dyn Error>> {
@@ -96,10 +96,10 @@ pub fn download(host: &str, bytes: usize) -> Result<f64, Box<dyn Error>> {
         }
         reader.consume(length);
     }
-    let elapsed = now.elapsed().as_millis();
-    info!("Download took {} ms", elapsed);
+    let elapsed = now.elapsed().as_micros();
+    info!("Download took {} ms", elapsed as f64 / 1000.0);
     info!("Download size: {} MB", len as f64 / MB as f64);
-    Ok(len as f64 / elapsed as f64 * 0.008)
+    Ok(len as f64 / elapsed as f64 * 8.0)
 }
 
 pub fn ping_server(host: &str) -> Result<f64, Box<dyn Error>> {
@@ -112,8 +112,8 @@ pub fn ping_server(host: &str) -> Result<f64, Box<dyn Error>> {
     stream.write_all(b"HI\r\n")?;
     let mut reader = BufReader::new(stream);
     reader.read_line(&mut line)?;
-    let elapsed = now.elapsed().as_millis();
-    Ok(elapsed as f64)
+    let elapsed = now.elapsed().as_micros();
+    Ok(elapsed as f64 / 1000.0)
 }
 
 pub fn list_servers() -> Result<Vec<Server>, Box<dyn Error>> {
