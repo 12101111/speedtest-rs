@@ -3,7 +3,7 @@ use rand::Rng;
 use serde::Deserialize;
 use std::error::Error;
 use std::fmt;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{Read, BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::time::Instant;
 
@@ -87,9 +87,9 @@ pub fn download(host: &str, bytes: usize) -> Result<f64, Box<dyn Error>> {
     let now = Instant::now();
     reader.read_line(&mut line)?;
     let elapsed = now.elapsed().as_millis();
-    info!("Server response: {:?}", line);
     info!("Download took {} ms", elapsed);
-    Ok(bytes as f64 / elapsed as f64 * 0.008)
+    info!("Download size: {} MB", line.len() as f64 / (1024.0 * 1024.0));
+    Ok(line.len() as f64 / elapsed as f64 * 0.008)
 }
 
 pub fn ping_server(host: &str) -> Result<f64, Box<dyn Error>> {
