@@ -37,10 +37,10 @@ enum Command {
 }
 
 impl Command {
-    fn unit(&self) -> &str {
+    fn display(&self, val: f64) -> String {
         match self {
-            Command::Upload | Command::Download => "MB/s",
-            _ => "ms",
+            Command::Upload | Command::Download => format!("{} Mbps ({} MB/s)", val, val / 8.0),
+            _ => format!("{} ms", val),
         }
     }
 }
@@ -86,7 +86,7 @@ fn run(opt: Opt) -> Result<(), Box<dyn Error>> {
                 let host = opt.host.as_ref().unwrap().clone();
                 info!("Select server: {} based on host settings", host);
                 host
-            }else{
+            } else {
                 best_server()?.host
             };
             // Get running count
@@ -102,13 +102,12 @@ fn run(opt: Opt) -> Result<(), Box<dyn Error>> {
                     _ => unreachable!(),
                 };
                 result += res;
-                info!("seq={:?} result={} {}", count, res, opt.cmd.unit());
+                info!("seq={:?} result={}", count, opt.cmd.display(res));
             }
             println!(
-                "{:?} result={} {}",
+                "{:?} result={}",
                 opt.cmd,
-                result / count as f64,
-                opt.cmd.unit()
+                opt.cmd.display(result / count as f64)
             );
         }
     }
