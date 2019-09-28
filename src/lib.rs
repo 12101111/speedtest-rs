@@ -83,16 +83,18 @@ pub fn download(host: &str, bytes: usize) -> Result<f64, Box<dyn Error>> {
     let dlstring = format!("DOWNLOAD {}\r\n", bytes);
     info!("send download message: {:?}", dlstring);
     stream.write_all(dlstring.as_bytes())?;
-    let reader = BufReader::new(stream);
+    let mut reader = BufReader::with_capacity(1024 * 1024, stream);
     info!("downloading...");
     let mut len = 0;
     let now = Instant::now();
-    for c in reader.bytes() {
-        if c? == b'\n' {
+    loop {
+        let buffer = reader.fill_buf()?;
+        let length = buffer.len();
+        len += length;
+        if buffer.last() == Some(&b'\n') {
             break;
-        } else {
-            len += 1;
         }
+        reader.consume(length);
     }
     let elapsed = now.elapsed().as_millis();
     info!("Download took {} ms", elapsed);
