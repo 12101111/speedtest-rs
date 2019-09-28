@@ -3,9 +3,11 @@ use rand::Rng;
 use serde::Deserialize;
 use std::error::Error;
 use std::fmt;
-use std::io::{Read, BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::time::Instant;
+
+const MB: usize = 1024 * 1024;
 
 #[derive(Clone, Deserialize)]
 pub struct Server {
@@ -50,7 +52,7 @@ impl fmt::Debug for Server {
 }
 
 pub fn upload(host: &str, bytes: usize) -> Result<f64, Box<dyn Error>> {
-    info!("Upload {} MB", bytes as f64 / (1024.0 * 1024.0));
+    info!("Upload {} MB", bytes as f64 / MB as f64);
     info!("connect to server: {}", host);
     let mut stream = TcpStream::connect(host)?;
     let ulstring = format!("UPLOAD {} 0\r\n", bytes);
@@ -75,21 +77,29 @@ pub fn upload(host: &str, bytes: usize) -> Result<f64, Box<dyn Error>> {
 }
 
 pub fn download(host: &str, bytes: usize) -> Result<f64, Box<dyn Error>> {
-    info!("Download {} MB", bytes as f64 / (1024.0 * 1024.0));
+    info!("Download {} MB", bytes as f64 / MB as f64);
     info!("connect to server: {}", host);
     let mut stream = TcpStream::connect(host)?;
     let dlstring = format!("DOWNLOAD {}\r\n", bytes);
     info!("send download message: {:?}", dlstring);
     stream.write_all(dlstring.as_bytes())?;
-    let mut line = String::new();
-    let mut reader = BufReader::new(stream);
+    let mut reader = BufReader::with_capacity(MB, stream);
     info!("downloading...");
+    let mut len = 0;
     let now = Instant::now();
-    reader.read_line(&mut line)?;
+    loop {
+        let buffer = reader.fill_buf()?;
+        let length = buffer.len();
+        len += length;
+        if length == 0 || buffer.last() == Some(&b'\n') {
+            break;
+        }
+        reader.consume(length);
+    }
     let elapsed = now.elapsed().as_millis();
     info!("Download took {} ms", elapsed);
-    info!("Download size: {} MB", line.len() as f64 / (1024.0 * 1024.0));
-    Ok(line.len() as f64 / elapsed as f64 * 0.008)
+    info!("Download size: {} MB", len as f64 / MB as f64);
+    Ok(len as f64 / elapsed as f64 * 0.008)
 }
 
 pub fn ping_server(host: &str) -> Result<f64, Box<dyn Error>> {
