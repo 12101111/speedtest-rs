@@ -58,13 +58,14 @@ pub fn upload(host: &str, bytes: usize) -> Result<f64, Box<dyn Error>> {
     let ulstring = format!("UPLOAD {} 0\r\n", bytes);
     info!("send upload message: {:?}", ulstring);
     stream.write_all(ulstring.as_bytes())?;
-    info!("uploading...");
-    let mut line = String::new();
+    info!("generating random bytes");
     let mut randstring: String = rand::thread_rng()
         .sample_iter(&rand::distributions::Alphanumeric)
         .take(bytes - ulstring.len())
         .collect();
     randstring.push('\n');
+    info!("uploading...");
+    let mut line = String::new();
     let now = Instant::now();
     stream.write_all(randstring.as_bytes())?;
     let mut reader = BufReader::new(stream);
