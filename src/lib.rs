@@ -3,7 +3,7 @@ use rand::Rng;
 use serde::Deserialize;
 use std::error::Error;
 use std::fmt;
-use std::io::{Read, BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::net::TcpStream;
 use std::time::Instant;
 
@@ -56,17 +56,19 @@ pub fn upload(host: &str, bytes: usize) -> Result<f64, Box<dyn Error>> {
     let ulstring = format!("UPLOAD {} 0\r\n", bytes);
     info!("send upload message: {:?}", ulstring);
     stream.write_all(ulstring.as_bytes())?;
-    info!("generating random bytes");
-    let mut randstring: String = rand::thread_rng()
-        .sample_iter(&rand::distributions::Alphanumeric)
-        .take(bytes - ulstring.len())
-        .collect();
-    randstring.push('\n');
+    let mut rng = rand::thread_rng().sample_iter(&rand::distributions::Alphanumeric);
     info!("uploading...");
     let mut line = String::new();
+    let mut buf = [0u8];
+    let mut writer = BufWriter::new(stream);
     let now = Instant::now();
-    stream.write_all(randstring.as_bytes())?;
-    let mut reader = BufReader::new(stream);
+    for _ in 0..(bytes - ulstring.len()) {
+        buf[0] = rng.next().unwrap() as u8;
+        writer.write(&buf)?;
+    }
+    buf[0] = b'\n';
+    writer.write(&buf)?;
+    let mut reader = BufReader::new(writer.into_inner()?);
     reader.read_line(&mut line)?;
     let elapsed = now.elapsed().as_millis();
     info!("Server response: {:?}", line);
@@ -81,15 +83,21 @@ pub fn download(host: &str, bytes: usize) -> Result<f64, Box<dyn Error>> {
     let dlstring = format!("DOWNLOAD {}\r\n", bytes);
     info!("send download message: {:?}", dlstring);
     stream.write_all(dlstring.as_bytes())?;
-    let mut line = String::new();
-    let mut reader = BufReader::new(stream);
+    let reader = BufReader::new(stream);
     info!("downloading...");
+    let mut len = 0;
     let now = Instant::now();
-    reader.read_line(&mut line)?;
+    for c in reader.bytes() {
+        if c? == b'\n' {
+            break;
+        } else {
+            len += 1;
+        }
+    }
     let elapsed = now.elapsed().as_millis();
     info!("Download took {} ms", elapsed);
-    info!("Download size: {} MB", line.len() as f64 / (1024.0 * 1024.0));
-    Ok(line.len() as f64 / elapsed as f64 * 0.008)
+    info!("Download size: {} MB", len as f64 / (1024.0 * 1024.0));
+    Ok(len as f64 / elapsed as f64 * 0.008)
 }
 
 pub fn ping_server(host: &str) -> Result<f64, Box<dyn Error>> {
