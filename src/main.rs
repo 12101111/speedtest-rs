@@ -1,6 +1,9 @@
 use log::{error, info, LevelFilter};
+use simplelog::*;
 use speedtest::*;
 use std::error::Error;
+use std::fs::File;
+use std::path::PathBuf;
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -19,6 +22,9 @@ struct Opt {
     /// Specify hostname of server to test
     #[structopt(short = "n", long)]
     host: Option<String>,
+    /// Specify output path of log file
+    #[structopt(parse(from_os_str))]
+    log: Option<PathBuf>,
     /// Count of times to test
     #[structopt(short, long)]
     count: Option<usize>,
@@ -46,14 +52,25 @@ impl Command {
 }
 
 fn main() {
-    let opt = Opt::from_args();
-    let mut log_builder = env_logger::Builder::new();
-    if opt.verbose {
-        log_builder.filter_level(LevelFilter::Info);
-    } else {
-        log_builder.filter_level(LevelFilter::Warn);
+    let mut opt = Opt::from_args();
+    let mut log_target: Vec<Box<dyn SharedLogger>> = Vec::new();
+    let log_config = ConfigBuilder::new().set_time_format_str("%T%.6f").build();
+    if opt.log.is_some() {
+        let write_logger = WriteLogger::new(
+            LevelFilter::Info,
+            log_config.clone(),
+            File::open(opt.log.take().unwrap()).unwrap(),
+        );
+        log_target.push(write_logger);
     }
-    log_builder.init();
+    let level = if opt.verbose {
+        LevelFilter::Info
+    } else {
+        LevelFilter::Warn
+    };
+    let term_logger = TermLogger::new(level, log_config, TerminalMode::Mixed).unwrap();
+    log_target.push(term_logger);
+    CombinedLogger::init(log_target).unwrap();
     if let Err(e) = run(opt) {
         error!("{}", e);
         std::process::exit(1);

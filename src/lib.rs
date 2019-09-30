@@ -98,7 +98,7 @@ pub fn download(host: &str, bytes: usize) -> Result<f64, Box<dyn Error>> {
         if len_since_last_measure > step {
             let time = old.elapsed().as_micros();
             info!(
-                "buffer length: {} KB, time: {} ms, speed: {} Mbps",
+                "Size: {} KB, time: {} ms, speed: {} Mbps",
                 len_since_last_measure as f64 / 1024.0,
                 time as f64 / 1000.0,
                 len_since_last_measure as f64 / time as f64 * 8.0
