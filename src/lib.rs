@@ -1,5 +1,6 @@
 use log::info;
-use rand::Rng;
+use rand::{Rng, SeedableRng};
+use rand_xoshiro::Xoshiro256Plus;
 use serde::Deserialize;
 use std::error::Error;
 use std::fmt;
@@ -63,16 +64,15 @@ pub fn upload(host: &str, bytes: usize) -> Result<f64, Box<dyn Error>> {
     let (tx, rx) = mpsc::sync_channel(8);
     thread::spawn(move || {
         let mut left = bytes - ulstring.len();
-        let rng = rand::thread_rng();
         while left > 0 {
-            let iter = rng.sample_iter(&rand::distributions::Alphanumeric);
-            let length = (4 * MB).min(left);
-            let buf = if left < 4 * MB {
-                let mut buf: String = iter.take(length).collect();
-                buf.push('\n');
-                buf
-            } else {
-                iter.take(length).collect()
+            let length = (8 * MB).min(left);
+            let mut buf: Vec<u8> = Xoshiro256Plus::from_entropy()
+                .sample_iter(&rand::distributions::Alphanumeric)
+                .map(|x| x as u8)
+                .take(length)
+                .collect();
+            if left < 8 * MB {
+                buf.push(b'\n');
             };
             tx.send(buf).unwrap();
             left -= length;
@@ -87,7 +87,7 @@ pub fn upload(host: &str, bytes: usize) -> Result<f64, Box<dyn Error>> {
     let step = bytes / 32;
     loop {
         let buffer = rx.recv()?;
-        stream.write_all(buffer.as_bytes())?;
+        stream.write_all(&buffer)?;
         let length = buffer.len();
         len += length;
         let len_since_last_measure = len - old_len;
@@ -102,7 +102,7 @@ pub fn upload(host: &str, bytes: usize) -> Result<f64, Box<dyn Error>> {
             old = Instant::now();
             old_len = len;
         }
-        if length == 0 || buffer.as_bytes().last() == Some(&b'\n') {
+        if length == 0 || buffer.last() == Some(&b'\n') {
             break;
         }
     }
