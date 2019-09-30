@@ -2,7 +2,7 @@ use log::{error, info, LevelFilter};
 use simplelog::*;
 use speedtest::*;
 use std::error::Error;
-use std::fs::File;
+use std::fs::OpenOptions;
 use std::path::PathBuf;
 use structopt::StructOpt;
 
@@ -59,7 +59,11 @@ fn main() {
         let write_logger = WriteLogger::new(
             LevelFilter::Info,
             log_config.clone(),
-            File::open(opt.log.take().unwrap()).unwrap(),
+            OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(opt.log.take().unwrap())
+                .unwrap(),
         );
         log_target.push(write_logger);
     }
@@ -119,7 +123,7 @@ fn run(opt: Opt) -> Result<(), Box<dyn Error>> {
                     _ => unreachable!(),
                 };
                 result += res;
-                info!("seq={:?} result={}", i, opt.cmd.display(res));
+                info!("seq={:?} result={}", i + 1, opt.cmd.display(res));
             }
             println!(
                 "{:?} result={}",
