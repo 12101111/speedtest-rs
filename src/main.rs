@@ -23,7 +23,7 @@ struct Opt {
     #[structopt(short = "n", long)]
     host: Option<String>,
     /// Specify output path of log file
-    #[structopt(parse(from_os_str))]
+    #[structopt(short, long, parse(from_os_str))]
     log: Option<PathBuf>,
     /// Count of times to test
     #[structopt(short, long)]
