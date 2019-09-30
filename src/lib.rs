@@ -5,6 +5,8 @@ use std::error::Error;
 use std::fmt;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
+use std::sync::mpsc;
+use std::thread;
 use std::time::Instant;
 
 const MB: usize = 1024 * 1024;
@@ -58,22 +60,59 @@ pub fn upload(host: &str, bytes: usize) -> Result<f64, Box<dyn Error>> {
     let ulstring = format!("UPLOAD {} 0\r\n", bytes);
     info!("send upload message: {:?}", ulstring);
     stream.write_all(ulstring.as_bytes())?;
-    info!("generating random bytes");
-    let mut randstring: String = rand::thread_rng()
-        .sample_iter(&rand::distributions::Alphanumeric)
-        .take(bytes - ulstring.len())
-        .collect();
-    randstring.push('\n');
+    let (tx, rx) = mpsc::sync_channel(8);
+    thread::spawn(move || {
+        let mut left = bytes - ulstring.len();
+        let rng = rand::thread_rng();
+        while left > 0 {
+            let iter = rng.sample_iter(&rand::distributions::Alphanumeric);
+            let length = (4 * MB).min(left);
+            let buf = if left < 4 * MB {
+                let mut buf: String = iter.take(length).collect();
+                buf.push('\n');
+                buf
+            } else {
+                iter.take(length).collect()
+            };
+            tx.send(buf).unwrap();
+            left -= length;
+        }
+    });
     info!("uploading...");
     let mut line = String::new();
     let now = Instant::now();
-    stream.write_all(randstring.as_bytes())?;
+    let mut old = now;
+    let mut len = 0;
+    let mut old_len = 0;
+    let step = bytes / 32;
+    loop {
+        let buffer = rx.recv()?;
+        stream.write_all(buffer.as_bytes())?;
+        let length = buffer.len();
+        len += length;
+        let len_since_last_measure = len - old_len;
+        if len_since_last_measure > step {
+            let time = old.elapsed().as_micros();
+            info!(
+                "Size: {} KB, time: {} ms, speed: {} Mbps",
+                len_since_last_measure as f64 / 1024.0,
+                time as f64 / 1000.0,
+                len_since_last_measure as f64 / time as f64 * 8.0
+            );
+            old = Instant::now();
+            old_len = len;
+        }
+        if length == 0 || buffer.as_bytes().last() == Some(&b'\n') {
+            break;
+        }
+    }
     let mut reader = BufReader::new(stream);
     reader.read_line(&mut line)?;
     let elapsed = now.elapsed().as_micros();
     info!("Server response: {:?}", line);
     info!("Upload took {} ms", elapsed as f64 / 1000.0);
-    Ok(bytes as f64 / elapsed as f64 * 8.0)
+    info!("Upload size: {} MB", len as f64 / MB as f64);
+    Ok(len as f64 / elapsed as f64 * 8.0)
 }
 
 pub fn download(host: &str, bytes: usize) -> Result<f64, Box<dyn Error>> {
