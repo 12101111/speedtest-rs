@@ -87,10 +87,25 @@ pub fn download(host: &str, bytes: usize) -> Result<f64, Box<dyn Error>> {
     info!("downloading...");
     let mut len = 0;
     let now = Instant::now();
+    let mut old = now;
+    let mut old_len = 0;
+    let step = bytes / 32;
     loop {
         let buffer = reader.fill_buf()?;
         let length = buffer.len();
         len += length;
+        let len_since_last_measure = len - old_len;
+        if len_since_last_measure > step {
+            let time = old.elapsed().as_micros();
+            info!(
+                "buffer length: {} KB, time: {} ms, speed: {} Mbps",
+                len_since_last_measure as f64 / 1024.0,
+                time as f64 / 1000.0,
+                len_since_last_measure as f64 / time as f64 * 8.0
+            );
+            old = Instant::now();
+            old_len = len;
+        }
         if length == 0 || buffer.last() == Some(&b'\n') {
             break;
         }
