@@ -4,6 +4,7 @@ use speedtest::*;
 use std::error::Error;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
+use std::thread;
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -13,6 +14,12 @@ struct Opt {
     /// Show verbose output
     #[structopt(short, long)]
     verbose: bool,
+    /// Specify output path of log file
+    #[structopt(short, long, parse(from_os_str))]
+    log: Option<PathBuf>,
+    /// Use all servers instead of near servers
+    #[structopt(short, long)]
+    all: bool,
     /// Number of bytes to test (only used in upload or download test)
     #[structopt(short, long)]
     bytes: Option<usize>,
@@ -22,9 +29,9 @@ struct Opt {
     /// Specify hostname of server to test
     #[structopt(short = "n", long)]
     host: Option<String>,
-    /// Specify output path of log file
-    #[structopt(short, long, parse(from_os_str))]
-    log: Option<PathBuf>,
+    /// Count of threads to test
+    #[structopt(short, long)]
+    thread: Option<usize>,
     /// Count of times to test
     #[structopt(short, long)]
     count: Option<usize>,
@@ -42,27 +49,18 @@ enum Command {
     Ping,
 }
 
-impl Command {
-    fn display(&self, val: f64) -> String {
-        match self {
-            Command::Upload | Command::Download => format!("{} Mbps ({} MB/s)", val, val / 8.0),
-            _ => format!("{} ms", val),
-        }
-    }
-}
-
 fn main() {
-    let mut opt = Opt::from_args();
+    let opt = Opt::from_args();
     let mut log_target: Vec<Box<dyn SharedLogger>> = Vec::new();
     let log_config = ConfigBuilder::new().set_time_format_str("%T%.6f").build();
-    if opt.log.is_some() {
+    if let Some(ref path) = &opt.log {
         let write_logger = WriteLogger::new(
             LevelFilter::Info,
             log_config.clone(),
             OpenOptions::new()
                 .append(true)
                 .create(true)
-                .open(opt.log.take().unwrap())
+                .open(path)
                 .unwrap(),
         );
         log_target.push(write_logger);
@@ -82,55 +80,89 @@ fn main() {
 }
 
 fn run(opt: Opt) -> Result<(), Box<dyn Error>> {
-    match opt.cmd {
-        Command::List => {
-            for s in list_servers()? {
-                if opt.verbose {
-                    println!("{:?}", s);
-                } else {
-                    println!("{}", s);
-                }
+    // option `all`
+    let list = if opt.all { Server::all } else { Server::near };
+
+    // command `ping`
+    if let Command::List = opt.cmd {
+        for s in list()? {
+            if opt.verbose {
+                println!("{:?}", s);
+            } else {
+                println!("{}", s);
             }
         }
-        _ => {
-            // Get hostname to test. not used in `list` command.
-            let host = if opt.id.is_some() {
-                let id = opt.id.as_ref().unwrap();
-                match list_servers()?.into_iter().find(|s| &s.id == id) {
-                    Some(s) => {
-                        info!("Select server: {} based on id: {}", s.sponsor, id);
-                        Ok(s.host)
-                    }
-                    None => Err(format!("Can't find server with id {}", id)),
-                }?
-            } else if opt.host.is_some() {
-                let host = opt.host.as_ref().unwrap().clone();
-                info!("Select server: {} based on host settings", host);
-                host
-            } else {
-                best_server()?.host
-            };
-            // Get running count
-            let count = opt
-                .count
-                .unwrap_or(if let Command::Ping = opt.cmd { 3 } else { 1 });
-            let mut result = 0.0;
-            for i in 0..count {
-                let res = match opt.cmd {
-                    Command::Download => download(&host, opt.bytes.unwrap_or(100 * 1024 * 1024))?,
-                    Command::Upload => upload(&host, opt.bytes.unwrap_or(50 * 1024 * 1024))?,
-                    Command::Ping => ping_server(&host)?,
+        return Ok(());
+    }
+
+    // Get hostname to test.
+    let host = if let Some(id) = opt.id {
+        match list()?.into_iter().find(|s| s.id == id) {
+            Some(s) => {
+                info!("Select server: {} based on id: {}", s.sponsor, id);
+                info!("Server hostname: {}", s.host);
+                Ok(s.host)
+            }
+            None => Err(format!("Can't find server with id {}", id)),
+        }?
+    } else if let Some(host) = opt.host {
+        info!("Select server: {} based on host settings", host);
+        host
+    } else {
+        Server::best()?.host
+    };
+
+    let count = opt
+        .count
+        .unwrap_or(if let Command::Ping = opt.cmd { 3 } else { 1 });
+    info!("Test will run {} time(s)", count);
+
+    if let Command::Ping = opt.cmd {
+        let mut stream = connect(&host)?;
+        let mut result = 0.0;
+        for i in 0..count {
+            let res = ping(&mut stream)?;
+            result += res;
+            info!("seq={:?} result={} ms", i + 1, res);
+        }
+        println!("{:?} result={} ms", opt.cmd, result / count as f64);
+    }
+
+    let bytes = opt.bytes.clone().unwrap_or(match opt.cmd {
+        Command::Download => 128 * 1024 * 1024,
+        Command::Upload => 40 * 1024 * 1024,
+        _ => unreachable!(),
+    });
+    info!("{:?} Size: {} MB", opt.cmd, bytes as f64 / MB as f64);
+
+    let mut result = 0.0;
+    for i in 0..count {
+        let res = if let Some(t) = opt.thread {
+                match opt.cmd {
+                    Command::Download => download_mt(host, bytes,t)?,
+                    Command::Upload => upload_mt(host, bytes,t)?,
                     _ => unreachable!(),
                 };
-                result += res;
-                info!("seq={:?} result={}", i + 1, opt.cmd.display(res));
+            unimplemented!()
+        } else {
+            let stream = connect(&host)?;
+            match opt.cmd {
+                Command::Download => download_st(stream, bytes)?,
+                Command::Upload => upload_st(stream, bytes)?,
+                _ => unreachable!(),
             }
-            println!(
-                "{:?} result={}",
-                opt.cmd,
-                opt.cmd.display(result / count as f64)
-            );
+        };
+        result += res;
+        info!("seq={:?} result={} Mbps ({} MB/s)", i + 1, res, res / 8.0);
+        if i > 0 && i != count {
+            thread::sleep(std::time::Duration::from_millis(500));
         }
     }
+    println!(
+        "{:?} result={} Mbps ({} MB/s)",
+        opt.cmd,
+        result / count as f64,
+        result / count as f64 / 8.0
+    );
     Ok(())
 }
