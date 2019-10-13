@@ -75,11 +75,7 @@ fn download(mut stream: TcpStream, bytes: usize, len: Arc<AtomicUsize>) -> Resul
     }
     let time = now.elapsed().as_micros();
     info!("Download took {:?} seconds", time as f64 / 1000000.0);
-    if len.load(Ordering::Acquire) != bytes {
-        Err(failure::format_err!("Download was interrupted"))
-    } else {
-        Ok(bytes as f64 / time as f64 * 8.0)
-    }
+    Ok(bytes as f64 / time as f64 * 8.0)
 }
 
 fn measure(bytes: usize, len: Arc<AtomicUsize>) {
@@ -105,8 +101,10 @@ fn measure(bytes: usize, len: Arc<AtomicUsize>) {
 
 pub fn upload_st(stream: TcpStream, bytes: usize) -> Result<f64, Error> {
     let len = Arc::new(AtomicUsize::new(0));
-    let len1 = len.clone();
-    let handle = thread::spawn(move || upload(stream, bytes, len1));
+    let handle = {
+        let lent = len.clone();
+        thread::spawn(move || upload(stream, bytes, lent))
+    };
     measure(bytes, len);
     Ok(handle.join().unwrap()?)
 }
@@ -135,7 +133,11 @@ pub fn download_st(stream: TcpStream, bytes: usize) -> Result<f64, Error> {
     let len1 = len.clone();
     let handle = thread::spawn(move || download(stream, bytes, len1));
     measure(bytes, len);
-    Ok(handle.join().unwrap()?)
+    if len.load(Ordering::Acquire) != bytes {
+        Err(failure::format_err!("Download was interrupted"))
+    } else {
+        Ok(handle.join().unwrap()?)
+    }
 }
 
 pub fn download_mt(host: String, bytes: usize, thread: usize) -> Result<f64, Error> {
@@ -149,12 +151,17 @@ pub fn download_mt(host: String, bytes: usize, thread: usize) -> Result<f64, Err
         let handle = thread::spawn(move || download(connection, bytes / thread, lent));
         handles.push(handle);
     }
-    measure(bytes, len);
+    let lent = len.clone();
+    measure(bytes, lent);
     for h in handles {
         h.join().unwrap()?;
     }
     let time = now.elapsed().as_micros();
-    Ok(bytes as f64 / time as f64 * 8.0)
+    if len.load(Ordering::Acquire) != bytes {
+        Err(failure::format_err!("Download was interrupted"))
+    } else {
+        Ok(bytes as f64 / time as f64 * 8.0)
+    }
 }
 
 pub fn ping(stream: &mut TcpStream) -> Result<f64, Error> {
