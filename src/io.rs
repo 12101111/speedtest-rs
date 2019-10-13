@@ -2,7 +2,7 @@ use failure::Error;
 use log::info;
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoroshiro128PlusPlus;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
@@ -112,7 +112,22 @@ pub fn upload_st(stream: TcpStream, bytes: usize) -> Result<f64, Error> {
 }
 
 pub fn upload_mt(host: String, bytes: usize, thread: usize) -> Result<f64, Error> {
-    unimplemented!()
+    let bytes = bytes / thread * thread;
+    let len = Arc::new(AtomicUsize::new(0));
+    let now = Instant::now();
+    let mut handles = Vec::new();
+    for _ in 0..thread {
+        let lent = len.clone();
+        let connection = TcpStream::connect(&host)?;
+        let handle = thread::spawn(move || upload(connection, bytes / thread, lent));
+        handles.push(handle);
+    }
+    measure(bytes, len);
+    for h in handles {
+        h.join().unwrap()?;
+    }
+    let time = now.elapsed().as_micros();
+    Ok(bytes as f64 / time as f64 * 8.0)
 }
 
 pub fn download_st(stream: TcpStream, bytes: usize) -> Result<f64, Error> {
@@ -124,7 +139,22 @@ pub fn download_st(stream: TcpStream, bytes: usize) -> Result<f64, Error> {
 }
 
 pub fn download_mt(host: String, bytes: usize, thread: usize) -> Result<f64, Error> {
-    unimplemented!()
+    let bytes = bytes / thread * thread;
+    let len = Arc::new(AtomicUsize::new(0));
+    let now = Instant::now();
+    let mut handles = Vec::new();
+    for _ in 0..thread {
+        let lent = len.clone();
+        let connection = TcpStream::connect(&host)?;
+        let handle = thread::spawn(move || download(connection, bytes / thread, lent));
+        handles.push(handle);
+    }
+    measure(bytes, len);
+    for h in handles {
+        h.join().unwrap()?;
+    }
+    let time = now.elapsed().as_micros();
+    Ok(bytes as f64 / time as f64 * 8.0)
 }
 
 pub fn ping(stream: &mut TcpStream) -> Result<f64, Error> {
