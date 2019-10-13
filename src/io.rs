@@ -130,9 +130,12 @@ pub fn upload_mt(host: String, bytes: usize, thread: usize) -> Result<f64, Error
 
 pub fn download_st(stream: TcpStream, bytes: usize) -> Result<f64, Error> {
     let len = Arc::new(AtomicUsize::new(0));
-    let len1 = len.clone();
-    let handle = thread::spawn(move || download(stream, bytes, len1));
-    measure(bytes, len);
+    let handle = {
+        let lent = len.clone();
+        thread::spawn(move || download(stream, bytes, lent))
+    };
+    let lent = len.clone();
+    measure(bytes, lent);
     if len.load(Ordering::Acquire) != bytes {
         Err(failure::format_err!("Download was interrupted"))
     } else {
